@@ -254,7 +254,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         else:
             line = compute_default_line(frame.shape)
 
-    line_zone = sv.LineZone(point1=line.point1, point2=line.point2)
+    line_zone = sv.LineZone(point_start=line.point1, point_end=line.point2)
     line_annotator = sv.LineZoneAnnotator(thickness=2, text_thickness=2, text_scale=1.0)
     box_annotator = sv.BoxAnnotator(thickness=2, text_thickness=1, text_scale=0.5)
 
