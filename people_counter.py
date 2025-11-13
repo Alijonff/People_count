@@ -224,27 +224,11 @@ def empty_detections() -> sv.Detections:
 
 
 def create_line_zone(line: LineDefinition) -> sv.LineZone:
-    """Создаёт ``LineZone`` независимо от версии ``supervision``.
-
-    Современные версии ``supervision`` ожидают аргументы ``start`` и ``end``
-    типа ``sv.Point``. На случай использования более старой версии оставляем
-    резервный путь через позиционные и именованные аргументы ``point1`` /
-    ``point2``.
-    """
+    """Создаёт ``LineZone`` используя актуальный API ``supervision``."""
 
     start_point = sv.Point(*line.point1)
     end_point = sv.Point(*line.point2)
-
-    try:
-        return sv.LineZone(start=start_point, end=end_point)
-    except TypeError as start_end_error:
-        try:
-            return sv.LineZone(line.point1, line.point2)
-        except TypeError:
-            try:
-                return sv.LineZone(point1=line.point1, point2=line.point2)
-            except TypeError:
-                raise start_end_error
+    return sv.LineZone(start=start_point, end=end_point)
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
@@ -280,7 +264,12 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
 
     line_zone = create_line_zone(line)
     line_annotator = sv.LineZoneAnnotator(thickness=2, text_scale=1.0)
-    box_annotator = sv.BoxAnnotator(thickness=2, text_scale=0.5)
+    box_annotator = sv.BoxAnnotator(thickness=2)
+    label_annotator = sv.LabelAnnotator(
+        text_scale=0.5,
+        text_thickness=1,
+        text_color=sv.Color.from_hex("#FFFFFF"),
+    )
 
     track_last_side: Dict[int, int] = {}
     total_in = 0
@@ -321,7 +310,12 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
 
             labels = [f"ID {int(tid)}" for tid in tracker_ids] if len(detections) else []
             annotated_frame = box_annotator.annotate(
-                scene=original_frame.copy(), detections=detections, labels=labels
+                scene=original_frame.copy(), detections=detections
+            )
+            annotated_frame = label_annotator.annotate(
+                scene=annotated_frame,
+                detections=detections,
+                labels=labels,
             )
 
             for bbox, tracker_id in zip(detections.xyxy, tracker_ids):
