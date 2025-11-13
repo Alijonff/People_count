@@ -346,8 +346,6 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
                 track_last_side[int(tracker_id)] = current_side
                 log_crossing(args.save_csv, int(tracker_id), direction, total_in, total_out)
 
-        line_zone.in_count = total_in
-        line_zone.out_count = total_out
         annotated_frame = line_annotator.annotate(annotated_frame, line_zone)
 
         cv2.putText(
