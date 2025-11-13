@@ -279,8 +279,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             line = compute_default_line(frame.shape)
 
     line_zone = create_line_zone(line)
-    line_annotator = sv.LineZoneAnnotator(thickness=2, text_thickness=2, text_scale=1.0)
-    box_annotator = sv.BoxAnnotator(thickness=2, text_thickness=1, text_scale=0.5)
+    line_annotator = sv.LineZoneAnnotator(thickness=2, text_scale=1.0)
+    box_annotator = sv.BoxAnnotator(thickness=2, text_scale=0.5)
 
     track_last_side: Dict[int, int] = {}
     total_in = 0
