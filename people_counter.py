@@ -223,6 +223,25 @@ def empty_detections() -> sv.Detections:
     )
 
 
+def create_line_zone(line: LineDefinition) -> sv.LineZone:
+    """Создаёт ``LineZone`` независимо от версии ``supervision``.
+
+    В разных версиях библиотеки конструктор ``LineZone`` принимал как позиционные,
+    так и именованные аргументы ``point1``/``point2``. Чтобы обеспечить
+    совместимость с обоими вариантами, пробуем сначала позиционный вызов, а
+    затем — именованный. Если обе попытки завершаются ошибкой, повторно
+    возбуждаем исходное исключение, чтобы не скрывать другие проблемы.
+    """
+
+    try:
+        return sv.LineZone(line.point1, line.point2)
+    except TypeError as positional_error:
+        try:
+            return sv.LineZone(point1=line.point1, point2=line.point2)
+        except TypeError:
+            raise positional_error
+
+
 def main(argv: Optional[Iterable[str]] = None) -> int:
     """Точка входа в программу."""
 
@@ -254,9 +273,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         else:
             line = compute_default_line(frame.shape)
 
-    # Используем позиционные аргументы, чтобы избежать несовместимости
-    # между версиями supervision, где названия параметров могли отличаться.
-    line_zone = sv.LineZone(line.point1, line.point2)
+    line_zone = create_line_zone(line)
     line_annotator = sv.LineZoneAnnotator(thickness=2, text_thickness=2, text_scale=1.0)
     box_annotator = sv.BoxAnnotator(thickness=2, text_thickness=1, text_scale=0.5)
 
