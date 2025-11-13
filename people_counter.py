@@ -254,7 +254,9 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         else:
             line = compute_default_line(frame.shape)
 
-    line_zone = sv.LineZone(point_start=line.point1, point_end=line.point2)
+    # Используем позиционные аргументы, чтобы избежать несовместимости
+    # между версиями supervision, где названия параметров могли отличаться.
+    line_zone = sv.LineZone(line.point1, line.point2)
     line_annotator = sv.LineZoneAnnotator(thickness=2, text_thickness=2, text_scale=1.0)
     box_annotator = sv.BoxAnnotator(thickness=2, text_thickness=1, text_scale=0.5)
 
