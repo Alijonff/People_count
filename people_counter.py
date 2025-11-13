@@ -226,20 +226,25 @@ def empty_detections() -> sv.Detections:
 def create_line_zone(line: LineDefinition) -> sv.LineZone:
     """Создаёт ``LineZone`` независимо от версии ``supervision``.
 
-    В разных версиях библиотеки конструктор ``LineZone`` принимал как позиционные,
-    так и именованные аргументы ``point1``/``point2``. Чтобы обеспечить
-    совместимость с обоими вариантами, пробуем сначала позиционный вызов, а
-    затем — именованный. Если обе попытки завершаются ошибкой, повторно
-    возбуждаем исходное исключение, чтобы не скрывать другие проблемы.
+    Современные версии ``supervision`` ожидают аргументы ``start`` и ``end``
+    типа ``sv.Point``. На случай использования более старой версии оставляем
+    резервный путь через позиционные и именованные аргументы ``point1`` /
+    ``point2``.
     """
 
+    start_point = sv.Point(*line.point1)
+    end_point = sv.Point(*line.point2)
+
     try:
-        return sv.LineZone(line.point1, line.point2)
-    except TypeError as positional_error:
+        return sv.LineZone(start=start_point, end=end_point)
+    except TypeError as start_end_error:
         try:
-            return sv.LineZone(point1=line.point1, point2=line.point2)
+            return sv.LineZone(line.point1, line.point2)
         except TypeError:
-            raise positional_error
+            try:
+                return sv.LineZone(point1=line.point1, point2=line.point2)
+            except TypeError:
+                raise start_end_error
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
