@@ -151,12 +151,11 @@ def select_line_interactively(source: str | int) -> Optional[LineDefinition]:
     return None
 
 
-def compute_default_line(frame_shape: Tuple[int, int, int]) -> LineDefinition:
-    """Создаёт вертикальную линию по центру кадра."""
-
+def compute_default_line(frame_shape):
     height, width = frame_shape[:2]
-    x = width // 2
+    x = int(width * 0.25)       # линия на 25% от левого края
     return LineDefinition(point1=(x, 0), point2=(x, height))
+
 
 
 def prepare_video_capture(source: str | int) -> cv2.VideoCapture:
