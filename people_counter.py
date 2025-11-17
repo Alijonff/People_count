@@ -60,7 +60,7 @@ def parse_arguments(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     """Создаёт и обрабатывает аргументы командной строки."""
 
     parser = argparse.ArgumentParser(description="Подсчёт людей по пересечению линии")
-    parser.add_argument("--source", default=0, help="Источник видео: ID камеры или путь к файлу")
+    parser.add_argument("--source", default=1, help="Источник видео: ID камеры или путь к файлу")
     parser.add_argument(
         "--line",
         nargs=4,
