@@ -43,6 +43,7 @@ class FaceProfile:
     embedding: np.ndarray
     image_path: Path
     updated_at: dt.datetime
+    best_face_area: float = 0.0
 
     def to_dict(self, base_dir: Path) -> Dict[str, str | int | list[float]]:
         return {
@@ -50,6 +51,7 @@ class FaceProfile:
             "embedding": self.embedding.tolist(),
             "image_path": str(self.image_path.relative_to(base_dir)),
             "updated_at": self.updated_at.isoformat(),
+            "best_face_area": self.best_face_area,
         }
 
     @classmethod
@@ -59,6 +61,7 @@ class FaceProfile:
             embedding=np.array(data["embedding"], dtype=np.float32),
             image_path=base_dir / str(data["image_path"]),
             updated_at=dt.datetime.fromisoformat(str(data["updated_at"])),
+            best_face_area=float(data.get("best_face_area", 0.0)),
         )
 
 
@@ -102,7 +105,12 @@ class ProfileStore:
     def __init__(self, gallery_dir: str | Path):
         self.gallery_dir = Path(gallery_dir)
         self.gallery_dir.mkdir(parents=True, exist_ok=True)
-        self.meta_path = self.gallery_dir / "profiles.json"
+        self.date_dir = self.gallery_dir / dt.date.today().isoformat()
+        self.person_dir = self.date_dir / "person"
+        self.tracker_dir = self.date_dir / "tracker"
+        self.person_dir.mkdir(parents=True, exist_ok=True)
+        self.tracker_dir.mkdir(parents=True, exist_ok=True)
+        self.meta_path = self.date_dir / "profiles.json"
         self.profiles: Dict[int, FaceProfile] = {}
         self._load_metadata()
 
@@ -116,11 +124,11 @@ class ProfileStore:
             return
 
         for item in data:
-            profile = FaceProfile.from_dict(item, self.gallery_dir)
+            profile = FaceProfile.from_dict(item, self.date_dir)
             self.profiles[profile.person_id] = profile
 
     def _save_metadata(self) -> None:
-        payload = [p.to_dict(self.gallery_dir) for p in self.profiles.values()]
+        payload = [p.to_dict(self.date_dir) for p in self.profiles.values()]
         self.meta_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _next_id(self) -> int:
@@ -128,9 +136,15 @@ class ProfileStore:
             return 1
         return max(self.profiles.keys()) + 1
 
-    def _save_snapshot(self, person_id: int, face_image: np.ndarray) -> Path:
+    def _save_person_snapshot(self, person_id: int, face_image: np.ndarray) -> Path:
         timestamp = int(dt.datetime.utcnow().timestamp())
-        file_path = self.gallery_dir / f"person_{person_id}_{timestamp}.jpg"
+        file_path = self.person_dir / f"person_{person_id}_{timestamp}.jpg"
+        cv2.imwrite(str(file_path), face_image)
+        return file_path
+
+    def _save_tracker_snapshot(self, person_id: int, face_image: np.ndarray) -> Path:
+        timestamp = int(dt.datetime.utcnow().timestamp())
+        file_path = self.tracker_dir / f"person_{person_id}_{timestamp}.jpg"
         cv2.imwrite(str(file_path), face_image)
         return file_path
 
@@ -149,29 +163,48 @@ class ProfileStore:
     def create_profile(self, embedding: np.ndarray, face_image: np.ndarray) -> int:
         person_id = self._next_id()
         normalized_embedding = normalize_embedding(embedding)
-        snapshot_path = self._save_snapshot(person_id, face_image)
+        face_area = float(face_image.shape[0] * face_image.shape[1])
+        self._save_tracker_snapshot(person_id, face_image)
+        snapshot_path = self._save_person_snapshot(person_id, face_image)
         profile = FaceProfile(
             person_id=person_id,
             embedding=normalized_embedding,
             image_path=snapshot_path,
             updated_at=dt.datetime.utcnow(),
+            best_face_area=face_area,
         )
         self.profiles[person_id] = profile
         self._save_metadata()
         print(f"Создан новый профиль: person_id={person_id}, снимок={snapshot_path}")
         return person_id
 
-    def touch_profile(self, person_id: int, embedding: Optional[np.ndarray] = None, face_image: Optional[np.ndarray] = None) -> None:
+    def touch_profile(
+        self,
+        person_id: int,
+        embedding: Optional[np.ndarray] = None,
+        face_image: Optional[np.ndarray] = None,
+    ) -> None:
         profile = self.profiles.get(person_id)
         if profile is None:
             return
+        updated = False
         if embedding is not None:
             profile.embedding = normalize_embedding(embedding)
+            updated = True
         if face_image is not None:
-            profile.image_path = self._save_snapshot(person_id, face_image)
-        profile.updated_at = dt.datetime.utcnow()
-        self._save_metadata()
-        print(f"Профиль {person_id} обновлён")
+            self._save_tracker_snapshot(person_id, face_image)
+            face_area = float(face_image.shape[0] * face_image.shape[1])
+            if face_area > profile.best_face_area:
+                profile.image_path = self._save_person_snapshot(person_id, face_image)
+                profile.best_face_area = face_area
+                updated = True
+            else:
+                updated = True
+
+        if updated:
+            profile.updated_at = dt.datetime.utcnow()
+            self._save_metadata()
+            print(f"Профиль {person_id} обновлён")
 
     def cleanup_expired(self, ttl_hours: float) -> None:
         now = dt.datetime.utcnow()
@@ -182,6 +215,10 @@ class ProfileStore:
                 try:
                     if profile.image_path.exists():
                         profile.image_path.unlink()
+                    for tracker_snapshot in self.tracker_dir.glob(
+                        f"person_{pid}_*.jpg"
+                    ):
+                        tracker_snapshot.unlink()
                 except OSError:
                     pass
                 del self.profiles[pid]
