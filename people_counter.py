@@ -26,6 +26,21 @@ DEFAULT_MODEL = "yolov8n.pt"
 DEFAULT_CONFIDENCE = 0.4
 
 
+@dataclass
+class PersonSession:
+    """Состояние присутствия человека в кадре."""
+
+    track_id: int
+    first_seen: dt.datetime
+    last_seen: dt.datetime
+    active: bool
+    total_time_sec: float = 0.0
+
+
+person_sessions: Dict[int, PersonSession] = {}
+MISSING_THRESHOLD_SEC = 3.0
+
+
 
 def parse_arguments(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     """Создаёт и обрабатывает аргументы командной строки."""
