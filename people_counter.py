@@ -129,6 +129,12 @@ def select_line_interactively(source: str | int) -> Optional[LineDefinition]:
         print("Не удалось открыть источник для интерактивного выбора линии", file=sys.stderr)
         return None
 
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+    width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+    height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    print(f"Используемое разрешение видео: {int(width)}x{int(height)}")
+
     line_points: list[Tuple[int, int]] = []
 
     def on_mouse(event: int, x: int, y: int, _: int, __: int) -> None:
@@ -187,6 +193,12 @@ def prepare_video_capture(source: str | int) -> cv2.VideoCapture:
 
     if not cap.isOpened():
         raise RuntimeError("Не удалось открыть источник видео")
+
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+    width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+    height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    print(f"Используемое разрешение видео: {int(width)}x{int(height)}")
 
     return cap
 
