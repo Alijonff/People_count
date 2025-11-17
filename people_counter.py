@@ -29,6 +29,13 @@ DEFAULT_CSV_PATH = "people_counts.csv"
 IN_LABEL = "IN"
 OUT_LABEL = "OUT"
 
+# Три рабочих места — координаты временные, я их позже заменю.
+SEAT_ZONES = {
+    "seat_1": ((100, 100), (300, 300)),  # Левое место
+    "seat_2": ((400, 100), (600, 300)),  # Центральное место
+    "seat_3": ((700, 100), (900, 300)),  # Правое место
+}
+
 
 @dataclass
 class LineDefinition:
@@ -48,7 +55,7 @@ def parse_arguments(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     """Создаёт и обрабатывает аргументы командной строки."""
 
     parser = argparse.ArgumentParser(description="Подсчёт людей по пересечению линии")
-    parser.add_argument("--source", default=0, help="Источник видео: ID камеры или путь к файлу")
+    parser.add_argument("--source", default=1, help="Источник видео: ID камеры или путь к файлу")
     parser.add_argument(
         "--line",
         nargs=4,
@@ -110,7 +117,7 @@ def select_line_interactively(source: str | int) -> Optional[LineDefinition]:
     Возвращает ``LineDefinition`` или ``None``, если выбрать линию не удалось.
     """
 
-    cap = cv2.VideoCapture(source)
+    cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
     if not cap.isOpened():
         print("Не удалось открыть источник для интерактивного выбора линии", file=sys.stderr)
         return None
@@ -161,7 +168,7 @@ def compute_default_line(frame_shape):
 def prepare_video_capture(source: str | int) -> cv2.VideoCapture:
     """Открывает источник видео и возвращает объект ``VideoCapture``."""
 
-    cap = cv2.VideoCapture(source)
+    cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
     if not cap.isOpened():
         raise RuntimeError("Не удалось открыть источник видео")
     return cap
@@ -274,6 +281,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     total_in = 0
     total_out = 0
 
+    seat_occupied = {name: False for name in SEAT_ZONES.keys()}
+
     print(f"Используется устройство: {device}")
 
     while True:
@@ -289,6 +298,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         if not results:
             annotated_frame = frame.copy()
             detections = empty_detections()
+            tracker_ids = np.empty((len(detections),), dtype=int)
         else:
             result = results[0]
             original_frame = result.orig_img
@@ -345,7 +355,38 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
                 track_last_side[int(tracker_id)] = current_side
                 log_crossing(args.save_csv, int(tracker_id), direction, total_in, total_out)
 
+        # Сбрасываем занятость на каждый кадр
+        seat_occupied = {name: False for name in SEAT_ZONES.keys()}
+
+        # Для каждого человека вычисляем центр
+        for bbox, tracker_id in zip(detections.xyxy, tracker_ids):
+            x1, y1, x2, y2 = bbox
+            cx = (x1 + x2) / 2
+            cy = (y1 + y2) / 2
+
+            # Проверяем попадание центра в каждый seat
+            for seat_name, ((sx1, sy1), (sx2, sy2)) in SEAT_ZONES.items():
+                if sx1 <= cx <= sx2 and sy1 <= cy <= sy2:
+                    seat_occupied[seat_name] = True
+
         annotated_frame = line_annotator.annotate(annotated_frame, line_zone)
+
+        for seat_name, ((sx1, sy1), (sx2, sy2)) in SEAT_ZONES.items():
+            color = (0, 255, 0) if seat_occupied[seat_name] else (0, 0, 255)
+            cv2.rectangle(annotated_frame, (sx1, sy1), (sx2, sy2), color, 2)
+
+            status_text = f"{seat_name}: {'occupied' if seat_occupied[seat_name] else 'free'}"
+
+            cv2.putText(
+                annotated_frame,
+                status_text,
+                (sx1, sy1 - 10),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
 
         cv2.putText(
             annotated_frame,
