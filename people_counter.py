@@ -403,6 +403,44 @@ def log_person_session(csv_path: str, session: PersonSession) -> None:
         )
 
 
+def resolve_person_conflicts(
+    assignments: Dict[int, Optional[int]],
+    existing_links: Dict[int, int],
+    confidences: Dict[int, float],
+) -> Dict[int, Optional[int]]:
+    """Устраняет ситуацию, когда один ``person_id`` назначен нескольким трекам."""
+
+    person_to_tracks: Dict[int, list[int]] = {}
+    for tid, pid in assignments.items():
+        if pid is None:
+            continue
+        person_to_tracks.setdefault(pid, []).append(tid)
+
+    for pid, tids in person_to_tracks.items():
+        if len(tids) <= 1:
+            continue
+
+        preferred_tid: Optional[int] = None
+        for tid in tids:
+            if existing_links.get(tid) == pid:
+                preferred_tid = tid
+                break
+
+        if preferred_tid is None:
+            preferred_tid = max(tids, key=lambda t: confidences.get(t, 0.0))
+
+        for tid in tids:
+            if tid == preferred_tid:
+                continue
+            assignments[tid] = None
+        print(
+            "Выявлен конфликт person_id, закрепляем PID"
+            f" {pid} за треком {preferred_tid}, остальные сброшены"
+        )
+
+    return assignments
+
+
 def main(argv: Optional[Iterable[str]] = None) -> int:
     """Точка входа в программу."""
 
@@ -476,12 +514,18 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
                 else np.empty((len(detections),), dtype=int)
             )
 
-        person_assignments: Dict[int, int] = {}
+        candidate_assignments: Dict[int, Optional[int]] = {}
+        detection_confidences: Dict[int, float] = {}
         if detections is not None and len(detections):
             for det_idx, tracker_id in enumerate(tracker_ids):
                 if tracker_id is None:
                     continue
                 tid = int(tracker_id)
+                detection_confidences[tid] = float(
+                    detections.confidence[det_idx]
+                    if detections.confidence is not None
+                    else 0.0
+                )
                 bbox = detections.xyxy[det_idx]
                 face_roi = extract_face_roi(original_frame, bbox, face_detector)
                 if face_roi is None:
@@ -504,9 +548,17 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
                 else:
                     profile_store.touch_profile(person_id, embedding)
 
-                if person_id is not None:
-                    track_to_person[tid] = person_id
-                    person_assignments[tid] = person_id
+                candidate_assignments[tid] = person_id
+
+        person_assignments = resolve_person_conflicts(
+            candidate_assignments, track_to_person, detection_confidences
+        )
+
+        for tid, pid in person_assignments.items():
+            if pid is None:
+                track_to_person.pop(tid, None)
+                continue
+            track_to_person[tid] = pid
 
         current_ids = set()
         if detections is not None and len(detections):
