@@ -1,13 +1,17 @@
 """People counting script using YOLOv8 and supervision.
 
 Этот скрипт открывает поток с камеры или видеофайла, отслеживает людей,
-подсчитывает входы через линию у входа и отображает занятость рабочих мест.
+и подсчитывает время их пребывания в кадре.
 """
 from __future__ import annotations
 
 import argparse
+import csv
+import datetime as dt
 import sys
-from typing import Dict, Iterable, Optional, Tuple
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, Iterable, Optional
 
 import cv2
 import numpy as np
@@ -21,21 +25,14 @@ import supervision as sv
 DEFAULT_MODEL = "yolov8n.pt"
 DEFAULT_CONFIDENCE = 0.4
 
-SEAT_ZONES = {
-    "seat_1": ((180, 520), (450, 800)),
-    "seat_2": ((450, 400), (750, 650)),
-    "seat_3": ((940, 150), (1320, 520)),
-}
-
-# Линия входа в департамент (вертикальная, слева).
-ENTRANCE_LINE_START = (180, 0)
-ENTRANCE_LINE_END = (180, 1080)
 
 
 def parse_arguments(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     """Создаёт и обрабатывает аргументы командной строки."""
 
-    parser = argparse.ArgumentParser(description="Подсчёт входов и занятости мест")
+    parser = argparse.ArgumentParser(
+        description="Отслеживание людей и времени их пребывания в кадре"
+    )
     parser.add_argument("--source", default=1, help="Источник видео: ID камеры или путь к файлу")
     parser.add_argument(
         "--conf",
@@ -48,6 +45,11 @@ def parse_arguments(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         choices=("auto", "cpu", "cuda"),
         default="auto",
         help="Вычислительное устройство для модели",
+    )
+    parser.add_argument(
+        "--save-csv",
+        default="people_counts.csv",
+        help="Путь для сохранения CSV сессий появления людей в кадре",
     )
     return parser.parse_args(argv)
 
@@ -100,21 +102,6 @@ def ensure_integer_source(source: str) -> str | int:
     return source
 
 
-def calculate_point_side_for_line(p1, p2, point):
-    """Определяет, по какую сторону от направленной линии (p1 -> p2) находится точка."""
-
-    x1, y1 = p1
-    x2, y2 = p2
-    px, py = point
-
-    cross = (px - x1) * (y2 - y1) - (py - y1) * (x2 - x1)
-    if cross > 0:
-        return 1
-    if cross < 0:
-        return -1
-    return 0
-
-
 def empty_detections() -> sv.Detections:
     """Создаёт пустой объект ``Detections`` для удобства работы."""
 
@@ -124,6 +111,34 @@ def empty_detections() -> sv.Detections:
         class_id=np.empty((0,), dtype=int),
         tracker_id=np.empty((0,), dtype=int),
     )
+
+
+def ensure_csv_header(csv_path: str) -> None:
+    """Гарантирует наличие заголовка в CSV-файле сессий."""
+
+    path = Path(csv_path)
+    if path.exists() and path.stat().st_size > 0:
+        return
+
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["track_id", "first_seen_iso", "last_seen_iso", "duration_sec"])
+
+
+def log_person_session(csv_path: str, session: PersonSession) -> None:
+    """Логирует завершённую сессию пребывания человека в кадре."""
+
+    duration = (session.last_seen - session.first_seen).total_seconds()
+    with open(csv_path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            [
+                session.track_id,
+                session.first_seen.isoformat(),
+                session.last_seen.isoformat(),
+                f"{duration:.2f}",
+            ]
+        )
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
@@ -147,10 +162,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         text_color=sv.Color.from_hex("#FFFFFF"),
     )
 
-    entrance_track_last_side: Dict[int, int] = {}
-    entrance_count = 0
-
-    seat_occupied = {name: False for name in SEAT_ZONES.keys()}
+    ensure_csv_header(args.save_csv)
 
     print(f"Используется устройство: {device}")
 
@@ -165,9 +177,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         )
 
         if not results:
-            annotated_frame = frame.copy()
+            original_frame = frame
             detections = empty_detections()
-            tracker_ids = np.empty((len(detections),), dtype=int)
         else:
             result = results[0]
             original_frame = result.orig_img
@@ -179,104 +190,75 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
                 else:
                     mask = detections.class_id == 0
                 detections = detections[mask]
+        annotated_frame = box_annotator.annotate(
+            scene=original_frame.copy(), detections=detections
+        )
 
+        now = dt.datetime.utcnow()
+
+        tracker_ids = np.empty((len(detections),), dtype=int)
+        if detections is not None and len(detections):
             tracker_ids = (
                 detections.tracker_id
                 if detections.tracker_id is not None
                 else np.empty((len(detections),), dtype=int)
             )
 
-            labels = [f"ID {int(tid)}" for tid in tracker_ids] if len(detections) else []
-            annotated_frame = box_annotator.annotate(
-                scene=original_frame.copy(), detections=detections
-            )
-            annotated_frame = label_annotator.annotate(
-                scene=annotated_frame,
-                detections=detections,
-                labels=labels,
-            )
+        current_ids = set()
+        if detections is not None and len(detections):
+            for tid in tracker_ids:
+                if tid is None:
+                    continue
+                current_ids.add(int(tid))
 
-        # -----------------------------------------
-        # Подсчёт входов через линию ENTRANCE_LINE
-        # -----------------------------------------
-        p1 = ENTRANCE_LINE_START
-        p2 = ENTRANCE_LINE_END
-
-        for bbox, tracker_id in zip(detections.xyxy, tracker_ids):
-            if tracker_id is None:
+        for tid in current_ids:
+            session = person_sessions.get(tid)
+            if session is None:
+                person_sessions[tid] = PersonSession(
+                    track_id=tid,
+                    first_seen=now,
+                    last_seen=now,
+                    active=True,
+                    total_time_sec=0.0,
+                )
                 continue
 
-            x1, y1, x2, y2 = bbox
-            cx = (x1 + x2) / 2
-            cy = (y1 + y2) / 2
+            session.last_seen = now
+            if not session.active:
+                session.first_seen = now
+                session.active = True
 
-            current_side = calculate_point_side_for_line(p1, p2, (cx, cy))
-            tid = int(tracker_id)
-
-            last_side = entrance_track_last_side.get(tid)
-
-            if last_side is None:
-                entrance_track_last_side[tid] = current_side
+        for tid, session in person_sessions.items():
+            if tid in current_ids:
                 continue
 
-            if current_side == 0 or current_side == last_side:
-                continue
+            if session.active:
+                delta = (now - session.last_seen).total_seconds()
+                if delta >= MISSING_THRESHOLD_SEC:
+                    session.total_time_sec += (
+                        session.last_seen - session.first_seen
+                    ).total_seconds()
+                    log_person_session(args.save_csv, session)
+                    session.active = False
 
-            if last_side < current_side:
-                entrance_count += 1
+        labels = []
+        if len(detections):
+            for tracker_id in tracker_ids:
+                if tracker_id is None:
+                    labels.append("ID ?")
+                    continue
 
-            entrance_track_last_side[tid] = current_side
+                tid = int(tracker_id)
+                session = person_sessions.get(tid)
+                current_duration = session.total_time_sec if session else 0.0
+                if session and session.active:
+                    current_duration += (now - session.first_seen).total_seconds()
+                labels.append(f"ID {tid} ({current_duration:.1f}s)")
 
-        # Сбрасываем занятость на каждый кадр
-        seat_occupied = {name: False for name in SEAT_ZONES.keys()}
-
-        # Для каждого человека вычисляем центр
-        for bbox, tracker_id in zip(detections.xyxy, tracker_ids):
-            x1, y1, x2, y2 = bbox
-            cx = (x1 + x2) / 2
-            cy = (y1 + y2) / 2
-
-            # Проверяем попадание центра в каждый seat
-            for seat_name, ((sx1, sy1), (sx2, sy2)) in SEAT_ZONES.items():
-                if sx1 <= cx <= sx2 and sy1 <= cy <= sy2:
-                    seat_occupied[seat_name] = True
-
-        for seat_name, ((sx1, sy1), (sx2, sy2)) in SEAT_ZONES.items():
-            color = (0, 255, 0) if seat_occupied[seat_name] else (0, 0, 255)
-            cv2.rectangle(annotated_frame, (sx1, sy1), (sx2, sy2), color, 2)
-
-            status_text = f"{seat_name}: {'occupied' if seat_occupied[seat_name] else 'free'}"
-
-            cv2.putText(
-                annotated_frame,
-                status_text,
-                (sx1, sy1 - 10),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (255, 255, 255),
-                2,
-                cv2.LINE_AA,
-            )
-
-        # Рисуем зелёную линию входа
-        cv2.line(
-            annotated_frame,
-            ENTRANCE_LINE_START,
-            ENTRANCE_LINE_END,
-            (0, 255, 0),
-            2,
-        )
-
-        # Пишем счётчик входов
-        cv2.putText(
-            annotated_frame,
-            f"ENTRANCES: {entrance_count}",
-            (10, 110),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (0, 255, 0),
-            2,
-            cv2.LINE_AA,
+        annotated_frame = label_annotator.annotate(
+            scene=annotated_frame,
+            detections=detections,
+            labels=labels,
         )
 
         cv2.imshow("People Counter", annotated_frame)
@@ -311,7 +293,11 @@ INSTRUCTIONS = """
 
        python people_counter.py --source path/to/video.mp4
 
-4. Автоопределение устройства: если доступен GPU (torch.cuda.is_available()),
+4. Для сохранения отчёта с временными сессиями укажите путь к CSV::
+
+       python people_counter.py --save-csv sessions.csv
+
+5. Автоопределение устройства: если доступен GPU (torch.cuda.is_available()),
    используется режим "cuda", иначе выполняется на CPU.
 """
 
