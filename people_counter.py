@@ -60,7 +60,7 @@ def parse_arguments(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     """Создаёт и обрабатывает аргументы командной строки."""
 
     parser = argparse.ArgumentParser(description="Подсчёт людей по пересечению линии")
-    parser.add_argument("--source", default=1, help="Источник видео: ID камеры или путь к файлу")
+    parser.add_argument("--source", default=0, help="Источник видео: ID камеры или путь к файлу")
     parser.add_argument(
         "--line",
         nargs=4,
@@ -124,6 +124,8 @@ def select_line_interactively(source: str | int) -> Optional[LineDefinition]:
 
     cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
     if not cap.isOpened():
+        cap = cv2.VideoCapture(source)
+    if not cap.isOpened():
         print("Не удалось открыть источник для интерактивного выбора линии", file=sys.stderr)
         return None
 
@@ -173,9 +175,19 @@ def compute_default_line(frame_shape):
 def prepare_video_capture(source: str | int) -> cv2.VideoCapture:
     """Открывает источник видео и возвращает объект ``VideoCapture``."""
 
-    cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
+    # сначала пытаемся через CAP_DSHOW, если source - индекс
+    if isinstance(source, int):
+        cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            # fallback на дефолтный backend
+            cap = cv2.VideoCapture(source)
+    else:
+        # если это строка (путь/rtsp), обычный вызов
+        cap = cv2.VideoCapture(source)
+
     if not cap.isOpened():
         raise RuntimeError("Не удалось открыть источник видео")
+
     return cap
 
 
