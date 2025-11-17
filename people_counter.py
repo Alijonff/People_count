@@ -22,14 +22,14 @@ DEFAULT_MODEL = "yolov8n.pt"
 DEFAULT_CONFIDENCE = 0.4
 
 SEAT_ZONES = {
-    "seat_1": ((100, 150), (450, 520)),
-    "seat_2": ((520, 150), (900, 520)),
+    "seat_1": ((180, 520), (450, 800)),
+    "seat_2": ((450, 400), (750, 650)),
     "seat_3": ((940, 150), (1320, 520)),
 }
 
 # Линия входа в департамент (вертикальная, слева).
-ENTRANCE_LINE_START = (40, 0)
-ENTRANCE_LINE_END = (40, 1080)
+ENTRANCE_LINE_START = (180, 0)
+ENTRANCE_LINE_END = (180, 1080)
 
 
 def parse_arguments(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
