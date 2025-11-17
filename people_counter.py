@@ -36,6 +36,11 @@ SEAT_ZONES = {
     "seat_3": ((700, 100), (900, 300)),  # Правое место
 }
 
+# Линия входа в департамент (вертикальная, слева).
+# Координаты примерные, я потом подправлю.
+ENTRANCE_LINE_START = (40, 0)  # x = 40, верх кадра
+ENTRANCE_LINE_END = (40, 720)  # x = 40, низ кадра (подставь реальную высоту)
+
 
 @dataclass
 class LineDefinition:
@@ -203,6 +208,21 @@ def calculate_point_side(line: LineDefinition, point: Tuple[float, float]) -> in
     return 0
 
 
+def calculate_point_side_for_line(p1, p2, point):
+    """Определяет, по какую сторону от направленной линии (p1 -> p2) находится точка."""
+
+    x1, y1 = p1
+    x2, y2 = p2
+    px, py = point
+
+    cross = (px - x1) * (y2 - y1) - (py - y1) * (x2 - x1)
+    if cross > 0:
+        return 1
+    if cross < 0:
+        return -1
+    return 0
+
+
 def log_crossing(
     csv_path: str,
     track_id: int,
@@ -278,6 +298,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     )
 
     track_last_side: Dict[int, int] = {}
+    entrance_track_last_side: Dict[int, int] = {}
+    entrance_count = 0
     total_in = 0
     total_out = 0
 
@@ -355,6 +377,37 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
                 track_last_side[int(tracker_id)] = current_side
                 log_crossing(args.save_csv, int(tracker_id), direction, total_in, total_out)
 
+        # -----------------------------------------
+        # Подсчёт входов через линию ENTRANCE_LINE
+        # -----------------------------------------
+        p1 = ENTRANCE_LINE_START
+        p2 = ENTRANCE_LINE_END
+
+        for bbox, tracker_id in zip(detections.xyxy, tracker_ids):
+            if tracker_id is None:
+                continue
+
+            x1, y1, x2, y2 = bbox
+            cx = (x1 + x2) / 2
+            cy = (y1 + y2) / 2
+
+            current_side = calculate_point_side_for_line(p1, p2, (cx, cy))
+            tid = int(tracker_id)
+
+            last_side = entrance_track_last_side.get(tid)
+
+            if last_side is None:
+                entrance_track_last_side[tid] = current_side
+                continue
+
+            if current_side == 0 or current_side == last_side:
+                continue
+
+            if last_side < current_side:
+                entrance_count += 1
+
+            entrance_track_last_side[tid] = current_side
+
         # Сбрасываем занятость на каждый кадр
         seat_occupied = {name: False for name in SEAT_ZONES.keys()}
 
@@ -387,6 +440,27 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
                 2,
                 cv2.LINE_AA,
             )
+
+        # Рисуем зелёную линию входа
+        cv2.line(
+            annotated_frame,
+            ENTRANCE_LINE_START,
+            ENTRANCE_LINE_END,
+            (0, 255, 0),
+            2,
+        )
+
+        # Пишем счётчик входов
+        cv2.putText(
+            annotated_frame,
+            f"ENTRANCES: {entrance_count}",
+            (10, 110),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (0, 255, 0),
+            2,
+            cv2.LINE_AA,
+        )
 
         cv2.putText(
             annotated_frame,
