@@ -298,6 +298,11 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         default=0.1,
         help="Минимальный IoU для сопоставления лица и бокса",
     )
+    parser.add_argument(
+        "--no-gui",
+        action="store_true",
+        help="Выключить отображение кадров через cv2.imshow (полезно в headless-средах)",
+    )
     return parser.parse_args(list(argv) if argv is not None else None)
 
 
@@ -310,6 +315,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
 
     tracks: Dict[int, TrackState] = {}
     known_identities: IdentityStore = {}
+
+    no_gui = args.no_gui
 
     try:
         while True:
@@ -327,12 +334,21 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
                 face_threshold=args.face_threshold,
                 iou_threshold=args.iou_threshold,
             )
-            cv2.imshow("Face-centric counter", annotated)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
+            if not no_gui:
+                try:
+                    cv2.imshow("Face-centric counter", annotated)
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        break
+                except cv2.error:
+                    print("OpenCV GUI недоступен, переключаемся в режим --no-gui")
+                    no_gui = True
     finally:
         cap.release()
-        cv2.destroyAllWindows()
+        if not no_gui:
+            try:
+                cv2.destroyAllWindows()
+            except cv2.error:
+                pass
         save_report_to_excel(tracks, known_identities, args.save_xlsx)
     return 0
 
