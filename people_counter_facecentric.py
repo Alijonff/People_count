@@ -316,7 +316,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     tracks: Dict[int, TrackState] = {}
     known_identities: IdentityStore = {}
 
-    no_gui = args.no_gui
+    exit_code = 0
 
     try:
         while True:
@@ -334,23 +334,21 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
                 face_threshold=args.face_threshold,
                 iou_threshold=args.iou_threshold,
             )
-            if not no_gui:
+            if not args.no_gui:
                 try:
                     cv2.imshow("Face-centric counter", annotated)
                     if cv2.waitKey(1) & 0xFF == ord("q"):
                         break
-                except cv2.error:
-                    print("OpenCV GUI недоступен, переключаемся в режим --no-gui")
-                    no_gui = True
+                except cv2.error as err:
+                    print(f"Ошибка отображения окна OpenCV: {err}")
+                    exit_code = 1
+                    break
     finally:
         cap.release()
-        if not no_gui:
-            try:
-                cv2.destroyAllWindows()
-            except cv2.error:
-                pass
+        if not args.no_gui:
+            cv2.destroyAllWindows()
         save_report_to_excel(tracks, known_identities, args.save_xlsx)
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":
