@@ -133,7 +133,7 @@ def parse_arguments(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Локальное создание Face ID и подсчёт времени присутствия"
     )
-    parser.add_argument("--source", default=0, help="Источник видео: ID камеры или путь")
+    parser.add_argument("--source", default=1, help="Источник видео: ID камеры или путь")
     parser.add_argument("--conf", type=float, default=DEFAULT_CONFIDENCE, help="Порог YOLO")
     parser.add_argument(
         "--device", choices=("auto", "cpu", "cuda"), default="auto", help="Устройство"
@@ -252,14 +252,21 @@ def process_frame(
     if detections is None or len(detections) == 0:
         return person_counter, unknown_counter
 
-    for det_idx in range(len(detections)):
-        if detections.class_id[det_idx] != 0:
+    boxes = detections
+    for det_idx in range(len(boxes)):
+        cls_id = int(boxes.cls[det_idx]) if boxes.cls is not None else None
+        if cls_id != 0:
             continue
-        tracker_id = detections.tracker_id[det_idx]
+        tracker_id = boxes.id[det_idx] if boxes.id is not None else None
         if tracker_id is None:
             continue
         tid = int(tracker_id)
-        bbox = detections.xyxy[det_idx]
+        bbox_tensor = boxes.xyxy[det_idx]
+        bbox = (
+            bbox_tensor.cpu().numpy()
+            if hasattr(bbox_tensor, "cpu")
+            else np.asarray(bbox_tensor)
+        )
         seen_tracks.add(tid)
         state = track_states.get(tid)
         if state is None:
@@ -364,14 +371,21 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             person_counter,
             unknown_counter,
         )
-        for det_idx in range(len(detections) if detections is not None else 0):
-            if detections.class_id[det_idx] != 0:
+        boxes = detections if detections is not None else None
+        for det_idx in range(len(boxes) if boxes is not None else 0):
+            cls_id = int(boxes.cls[det_idx]) if boxes.cls is not None else None
+            if cls_id != 0:
                 continue
-            tracker_id = detections.tracker_id[det_idx]
+            tracker_id = boxes.id[det_idx] if boxes.id is not None else None
             if tracker_id is None:
                 continue
             tid = int(tracker_id)
-            bbox = detections.xyxy[det_idx].astype(int)
+            bbox_tensor = boxes.xyxy[det_idx]
+            bbox = (
+                bbox_tensor.cpu().numpy()
+                if hasattr(bbox_tensor, "cpu")
+                else np.asarray(bbox_tensor)
+            ).astype(int)
             x1, y1, x2, y2 = bbox
             cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
             identity_id = track_states.get(tid, TrackState(tid, "?", dt.datetime.utcnow())).identity_id
