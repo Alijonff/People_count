@@ -305,7 +305,8 @@ def process_frame(
                 matched = match_local_identity(embedding, identities, threshold)
                 if matched is not None:
                     merge_identities(state.identity_id, matched, identities, track_states)
-                    identities[matched].embedding = identities[matched].embedding or embedding
+                    if identities[matched].embedding is None:
+                        identities[matched].embedding = embedding
                     identities[matched].type = "known_person"
                     if identities[matched].snapshot_path is None:
                         identities[matched].snapshot_path = save_snapshot(matched, frame, bbox)
