@@ -126,17 +126,18 @@ class FaceEncoder:
         if self.face_app is not None:
             faces = self.face_app.get(face_img)
             if faces:
-                return faces[0].normed_embedding.astype(np.float32)
+                emb = np.asarray(faces[0].normed_embedding, dtype=np.float32).reshape(-1)
+                return emb if emb.size > 0 else None
         if self.face_recognition is not None:
             rgb = face_img[:, :, ::-1]
             encodings = self.face_recognition.face_encodings(rgb)
             if encodings:
-                emb = np.asarray(encodings[0], dtype=np.float32)
-                return emb / np.linalg.norm(emb)
-        resized = cv2.resize(face_img, (48, 48), interpolation=cv2.INTER_AREA)
-        emb = resized.flatten().astype(np.float32)
-        norm = np.linalg.norm(emb)
-        return emb / norm if norm != 0 else emb
+                emb = np.asarray(encodings[0], dtype=np.float32).reshape(-1)
+                norm = np.linalg.norm(emb)
+                if norm == 0 or emb.size == 0:
+                    return None
+                return emb / norm
+        return None
 
 
 def resolve_device(device_arg: str) -> str:
@@ -197,6 +198,12 @@ def save_snapshot(identity_id: str, frame: np.ndarray, bbox: np.ndarray) -> str:
 
 
 def similarity(a: np.ndarray, b: np.ndarray) -> float:
+    if a is None or b is None:
+        return -1.0
+    a = np.asarray(a).reshape(-1)
+    b = np.asarray(b).reshape(-1)
+    if a.shape != b.shape or a.size == 0:
+        return -1.0
     a_n = a / (np.linalg.norm(a) + 1e-8)
     b_n = b / (np.linalg.norm(b) + 1e-8)
     return float(np.dot(a_n, b_n))
@@ -205,12 +212,20 @@ def similarity(a: np.ndarray, b: np.ndarray) -> float:
 def match_local_identity(
     embedding: np.ndarray, identities: Dict[str, IdentityInfo], threshold: float
 ) -> str | None:
+    if embedding is None:
+        return None
+    embedding = np.asarray(embedding).reshape(-1)
+    if embedding.size == 0:
+        return None
     best_id: str | None = None
     best_score = -1.0
     for identity_id, info in identities.items():
         if info.embedding is None:
             continue
-        score = similarity(embedding, info.embedding)
+        stored_embedding = np.asarray(info.embedding).reshape(-1)
+        if stored_embedding.shape != embedding.shape or stored_embedding.size == 0:
+            continue
+        score = similarity(embedding, stored_embedding)
         if score > best_score:
             best_score = score
             best_id = identity_id
@@ -302,6 +317,10 @@ def process_frame(
             face_img = face_encoder.extract_face(frame, bbox)
             embedding = face_encoder.compute_embedding(face_img) if face_img is not None else None
             if embedding is not None:
+                embedding = np.asarray(embedding, dtype=np.float32).reshape(-1)
+                if embedding.size == 0:
+                    embedding = None
+            if embedding is not None:
                 matched = match_local_identity(embedding, identities, threshold)
                 if matched is not None:
                     merge_identities(state.identity_id, matched, identities, track_states)
@@ -370,8 +389,9 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         success, frame = cap.read()
         if not success:
             break
+        raw_frame = frame.copy()
         results = model.track(
-            frame,
+            raw_frame,
             conf=args.conf,
             device=device,
             verbose=False,
@@ -381,7 +401,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         )
         detections = results[0].boxes if results else None
         person_counter, unknown_counter = process_frame(
-            frame,
+            raw_frame,
             detections,
             face_encoder,
             identities,
@@ -391,6 +411,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             person_counter,
             unknown_counter,
         )
+        annotated_frame = raw_frame.copy()
         boxes = detections if detections is not None else None
         for det_idx in range(len(boxes) if boxes is not None else 0):
             cls_id = int(boxes.cls[det_idx]) if boxes.cls is not None else None
@@ -407,10 +428,10 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
                 else np.asarray(bbox_tensor)
             ).astype(int)
             x1, y1, x2, y2 = bbox
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
             identity_id = track_states.get(tid, TrackState(tid, "?", dt.datetime.utcnow())).identity_id
             cv2.putText(
-                frame,
+                annotated_frame,
                 identity_id,
                 (x1, y1 - 6),
                 cv2.FONT_HERSHEY_SIMPLEX,
@@ -419,7 +440,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
                 2,
             )
         if not _GUI_DISABLED:
-            safe_imshow("People Counter First Seen", frame)
+            safe_imshow("People Counter First Seen", annotated_frame)
+            safe_imshow("Camera Raw", raw_frame)
         frame_idx += 1
         key = -1
         if not _GUI_DISABLED:
