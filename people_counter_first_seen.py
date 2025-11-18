@@ -28,6 +28,22 @@ DEFAULT_SIMILARITY_THRESHOLD = 0.5
 FACE_CHECK_INTERVAL = 5
 MISSING_THRESHOLD_SEC = 3.0
 SNAPSHOT_DIR = Path("snapshots")
+_GUI_DISABLED = False
+
+
+def safe_imshow(winname: str, frame) -> None:
+    """
+    Безопасный вариант cv2.imshow:
+    - если GUI доступен, показывает окно;
+    - если нет (cv2.error 'The function is not implemented'), просто игнорирует отображение.
+    """
+    global _GUI_DISABLED
+    if _GUI_DISABLED:
+        return
+    try:
+        cv2.imshow(winname, frame)
+    except cv2.error:
+        _GUI_DISABLED = True
 
 
 @dataclass
@@ -331,6 +347,7 @@ def build_report(identities: Dict[str, IdentityInfo]) -> pd.DataFrame:
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
+    global _GUI_DISABLED
     args = parse_arguments(argv)
     source = int(args.source) if isinstance(args.source, str) and args.source.isdigit() else args.source
     device = resolve_device(args.device)
@@ -398,9 +415,18 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
                 (255, 255, 255),
                 2,
             )
-        cv2.imshow("People Counter First Seen", frame)
+        if not _GUI_DISABLED:
+            safe_imshow("People Counter First Seen", frame)
         frame_idx += 1
-        if cv2.waitKey(1) & 0xFF == ord("q"):
+        key = -1
+        if not _GUI_DISABLED:
+            try:
+                key = cv2.waitKey(1) & 0xFF
+            except cv2.error:
+                _GUI_DISABLED = True
+                key = -1
+
+        if key == ord("q"):
             break
 
     cap.release()
